@@ -1,0 +1,129 @@
+commit ebe41422a61dd8e1fd5d2381762dff48ac218ecd
+Author: zhangzehui <zhangzehui@sunlytech.com>
+Date:   Tue Oct 30 16:30:28 2018 +0800
+
+    add mouse control interface
+
+diff --git a/libs/input/PointerController.cpp b/libs/input/PointerController.cpp
+index abef66f..deeffce 100644
+--- a/libs/input/PointerController.cpp
++++ b/libs/input/PointerController.cpp
+@@ -616,6 +616,14 @@ void PointerController::removeInactivityTimeoutLocked() {
+     mLooper->removeMessages(mHandler, MSG_INACTIVITY_TIMEOUT);
+ }
+ 
++void PointerController::setPointerIconVisible(bool visible) {
++    if (visible) {
++        fade(TRANSITION_IMMEDIATE);
++    } else {
++        unfade(TRANSITION_IMMEDIATE);
++    }
++}
++
+ void PointerController::updatePointerLocked() {
+     mSpriteController->openTransaction();
+ 
+diff --git a/libs/input/PointerController.h b/libs/input/PointerController.h
+index 4794f3d..1767b40 100644
+--- a/libs/input/PointerController.h
++++ b/libs/input/PointerController.h
+@@ -110,6 +110,7 @@ public:
+     void setDisplayViewport(int32_t width, int32_t height, int32_t orientation);
+     void setInactivityTimeout(InactivityTimeout inactivityTimeout);
+     void reloadPointerResources();
++    void setPointerIconVisible(bool visible);
+ 
+ private:
+     static const size_t MAX_RECYCLED_SPRITES = 12;
+diff --git a/services/core/java/com/android/server/input/InputManagerService.java b/services/core/java/com/android/server/input/InputManagerService.java
+index 719ce76..3dcb20d 100644
+--- a/services/core/java/com/android/server/input/InputManagerService.java
++++ b/services/core/java/com/android/server/input/InputManagerService.java
+@@ -231,6 +231,7 @@ public class InputManagerService extends IInputManager.Stub
+     private static native void nativeSetPointerIconType(long ptr, int iconId);
+     private static native void nativeReloadPointerIcons(long ptr);
+     private static native void nativeSetCustomPointerIcon(long ptr, PointerIcon icon);
++    private static native void nativeSetPointerIconVisible(long ptr, boolean visible);
+ 
+     // Input event injection constants defined in InputDispatcher.h.
+     private static final int INPUT_EVENT_INJECTION_SUCCEEDED = 0;
+@@ -346,6 +347,20 @@ public class InputManagerService extends IInputManager.Stub
+             }
+         }, new IntentFilter(Intent.ACTION_USER_SWITCHED), null, mHandler);
+ 
++        mContext.registerReceiver(new BroadcastReceiver() {
++            @Override
++            public void onReceive(Context context, Intent intent) {
++                InputDevice[] inputDevices = getInputDevices();
++                for (InputDevice inputDevice : inputDevices) {
++                    Slog.d(TAG, "inputDevice vendorId :" + inputDevice.getVendorId() + ", more info :" + inputDevice.toString());
++                    if (inputDevice.getVendorId() != 0x0F4E && inputDevice.getSources() == InputDevice.SOURCE_MOUSE) {
++                        boolean visible = intent.getBooleanExtra("visible", true);
++                        nativeSetPointerIconVisible(mPtr, visible);
++                    }
++                }
++            }
++        }, new IntentFilter("com.sunny.action.CONTRL_MOUSE"), null, mHandler);
++
+         updatePointerSpeedFromSettings();
+         updateShowTouchesFromSettings();
+         updateAccessibilityLargePointerFromSettings();
+diff --git a/services/core/jni/com_android_server_input_InputManagerService.cpp b/services/core/jni/com_android_server_input_InputManagerService.cpp
+index 88cfce8..bd0fc38 100644
+--- a/services/core/jni/com_android_server_input_InputManagerService.cpp
++++ b/services/core/jni/com_android_server_input_InputManagerService.cpp
+@@ -205,6 +205,7 @@ public:
+     void setInteractive(bool interactive);
+     void reloadCalibration();
+     void setPointerIconType(int32_t iconId);
++    void setPointerIconVisible(bool visible);
+     void reloadPointerIcons();
+     void setCustomPointerIcon(const SpriteIcon& icon);
+ 
+@@ -728,6 +729,7 @@ void NativeInputManager::setSystemUiVisibility(int32_t visibility) {
+     }
+ }
+ 
++
+ void NativeInputManager::updateInactivityTimeoutLocked(const sp<PointerController>& controller) {
+     bool lightsOut = mLocked.systemUiVisibility & ASYSTEM_UI_VISIBILITY_STATUS_BAR_HIDDEN;
+     controller->setInactivityTimeout(lightsOut
+@@ -784,6 +786,14 @@ void NativeInputManager::setPointerIconType(int32_t iconId) {
+     }
+ }
+ 
++void NativeInputManager::setPointerIconVisible(bool visible) {
++    AutoMutex _l(mLock);
++    sp<PointerController> controller = mLocked.pointerController.promote();
++    if (controller != NULL) {
++        controller->setPointerIconVisible(visible);
++    }
++}
++
+ void NativeInputManager::reloadPointerIcons() {
+     AutoMutex _l(mLock);
+     sp<PointerController> controller = mLocked.pointerController.promote();
+@@ -1379,6 +1389,14 @@ static void nativeSetInteractive(JNIEnv* env,
+     im->setInteractive(interactive);
+ }
+ 
++
++static void nativeSetPointerIconVisible(JNIEnv* env,
++        jclass clazz, jlong ptr, jboolean visible) {
++    NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
++    im->setPointerIconVisible(visible);
++}
++
++
+ static void nativeReloadCalibration(JNIEnv* env, jclass clazz, jlong ptr) {
+     NativeInputManager* im = reinterpret_cast<NativeInputManager*>(ptr);
+     im->reloadCalibration();
+@@ -1521,6 +1539,8 @@ static const JNINativeMethod gInputManagerMethods[] = {
+             (void*) nativeSetShowTouches },
+     { "nativeSetInteractive", "(JZ)V",
+             (void*) nativeSetInteractive },
++    { "nativeSetPointerIconVisible", "(JZ)V",
++            (void*) nativeSetPointerIconVisible },
+     { "nativeReloadCalibration", "(J)V",
+             (void*) nativeReloadCalibration },
+     { "nativeVibrate", "(JI[JII)V",
